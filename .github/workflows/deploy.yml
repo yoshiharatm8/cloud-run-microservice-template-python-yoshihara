@@ -1,0 +1,60 @@
+name: Deploy to Cloud Run Direct WIF
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ex-ai-training-program
+  GAR_LOCATION: asia-northeast1
+  REPOSITORY: cloud-run-source-deploy-yoshihara-0213
+  SERVICE: python-microservice-yoshihara-0213
+  REGION: asia-northeast1
+
+jobs:
+  deploy:
+    # OIDCトークン発行のために必須
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Direct Workload Identity Federationによる認証
+      - name: Google Auth
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+
+      # gcloudコマンドのセットアップ
+      - name: Set up Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          version: '>= 363.0.0'
+
+      # Cloud Build にビルドとプッシュを依頼
+      - name: Build and Push with Cloud Build
+        run: |-
+          gcloud builds submit \
+            --quiet \
+            --tag "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}" \
+            .
+
+      # Cloud Runへのデプロイ
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: '${{ env.SERVICE }}'
+          region: '${{ env.REGION }}'
+          image: '${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}'
+          flags: '--allow-unauthenticated'
+
+      - name: Show Output
+        run: echo ${{ steps.deploy.outputs.url }}
